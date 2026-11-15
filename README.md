@@ -1,5 +1,10 @@
 # WoW Forever for Android
 
+> **This fork** adds an experimental path for non-Adreno GPUs (Mali, e.g. the Unihertz Titan 2). On those devices the
+> game renders through the phone's own Vulkan driver instead of Turnip, defaults to 540p, and writes DXVK logs to a
+> `DxvkLogs` folder inside the game folder. It is untested beyond confirming that DXVK starts on a Mali-G615. Adreno
+> devices behave as upstream. Test APKs are built by the "Build test APK" workflow on every push.
+
 Play **World of Warcraft: Forever** on Snapdragon Android handhelds as a normal Android app. You tap the icon, press Play, and the game runs.
 
 This uses Blizzard's own **Windows ARM64** WoW client, so the game itself runs natively on the phone's CPU. Wine translates the Windows calls, and DXVK plus a patched Turnip Vulkan driver render the game on the Adreno GPU. Nothing is emulated as x86.

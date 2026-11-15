@@ -1,0 +1,53 @@
+# Builds a test APK on every push and attaches it to the run as an artifact. Signed with the debug key unless
+# app/keystores/keystore.properties exists, so it can't update (or be updated by) a release-signed install.
+name: Build test APK
+
+on:
+  push:
+    branches-ignore: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Install SDK components
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-36" "build-tools;35.0.0" "ndk;27.3.13750724" "cmake;3.22.1" > /dev/null
+
+      - name: Fetch bundled components
+        run: tools/fetch_components.sh
+
+      # The Secrets Gradle plugin refuses to configure the project without local.properties.
+      - name: Write local.properties
+        run: echo "sdk.dir=$ANDROID_HOME" > local.properties
+
+      - name: Build
+        run: ./gradlew --no-daemon :app:assembleModernRelease
+
+      - name: Rename the APK
+        run: cp app/build/outputs/apk/modern/release/app-modern-release.apk WoW-Forever-Mali-test.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WoW-Forever-Mali-test
+          path: WoW-Forever-Mali-test.apk

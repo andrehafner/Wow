@@ -973,7 +973,7 @@ enum class GameRegion(val label: String) {
 
 /** The 16:9 render budget, before it's reshaped to the window's aspect ratio. Defaults to the GPU profile's size. */
 enum class RenderResolution(val size: String, val label: String) {
-    HD("1280x720", "720p"), HD_PLUS("1600x900", "900p"), FULL_HD("1920x1080", "1080p");
+    QHD("960x540", "540p"), HD("1280x720", "720p"), HD_PLUS("1600x900", "900p"), FULL_HD("1920x1080", "1080p");
 
     companion object {
         private const val KEY_RESOLUTION = "resolution"
@@ -1180,12 +1180,27 @@ private const val ADRENO_8XX_DRIVER = "Turnip-V32-RP6sched"
 private const val PROTON_VERSION = "proton-11.0-90624-arm64ec"
 private const val DXVK_VERSION = "2.4.1-wow-aarch64-test"
 
+private const val SYSTEM_DRIVER = "System"
+private const val DXVK_LOG_DIR = "DxvkLogs"
+
 private data class GpuProfile(val driver: String, val tuDebug: String, val screenSize: String, val label: String, val edition: String) {
+    /** True when the phone's own Vulkan driver renders the game: Turnip only exists for Adreno GPUs. */
+    val usesSystemDriver get() = driver == SYSTEM_DRIVER
+
     companion object {
-        fun detect(context: Context) = if (isAdreno8xxDevice(context)) {
+        fun detect(context: Context) = if (!isAdrenoDevice(context)) {
+            val renderer = GPUInformation.getRenderer(context)?.takeIf { it.isNotBlank() } ?: "Non-Adreno GPU"
+            GpuProfile(SYSTEM_DRIVER, "noconform", "960x540", renderer, "$renderer / system Vulkan driver (experimental)")
+        } else if (isAdreno8xxDevice(context)) {
             GpuProfile(ADRENO_8XX_DRIVER, "noconform,sysmem", "1280x720", "Adreno 8xx", "Snapdragon 8 Elite / Adreno 8xx")
         } else {
             GpuProfile(DEFAULT_DRIVER, "noconform", "1920x1080", "Adreno 740", "Snapdragon 8 Series / Adreno 740")
+        }
+
+        private fun isAdrenoDevice(context: Context): Boolean {
+            val renderer = GPUInformation.getRenderer(context).orEmpty()
+            // An unreadable renderer keeps the stock Adreno path, which is what every supported device used before.
+            return renderer.isBlank() || renderer.contains("adreno", ignoreCase = true)
         }
 
         private fun isAdreno8xxDevice(context: Context): Boolean {
@@ -1223,7 +1238,7 @@ internal fun fitScreenSize(baseSize: String, windowWidth: Int, windowHeight: Int
 }
 
 private fun prepareLaunch(context: Context, gameRoot: File, gpu: GpuProfile, screenSize: String, onStatus: (String) -> Unit): String {
-    installBundledComponents(context, onStatus)
+    installBundledComponents(context, gpu, onStatus)
 
     check(File(gameRoot, BUILD_INFO).exists()) { "Missing $BUILD_INFO in $gameRoot. Copy it from your WoW install." }
     try {
@@ -1242,6 +1257,9 @@ private fun prepareLaunch(context: Context, gameRoot: File, gpu: GpuProfile, scr
             Timber.w(e, "Client update check failed, launching the existing $EXE_NAME")
         }
     }
+
+    // DXVK only writes its log into a folder that already exists.
+    if (gpu.usesSystemDriver) File(gameRoot, DXVK_LOG_DIR).mkdirs()
 
     onStatus("Configuring ${gpu.label} container...")
     val containerManager = ContainerManager(context)
@@ -1265,7 +1283,16 @@ private fun prepareLaunch(context: Context, gameRoot: File, gpu: GpuProfile, scr
 
 private fun containerConfig(gameRoot: File, gpu: GpuProfile, screenSize: String, identity: WowMachineIdentity): JSONObject {
     val samsungEnv = if (Build.MANUFACTURER.equals("samsung", ignoreCase = true)) " FD_DEV_FEATURES=enable_tp_ubwc_flag_hint=1" else ""
-    val envVars = "WRAPPER_MAX_IMAGE_COUNT=0 ZINK_DESCRIPTORS=lazy ZINK_DEBUG=compact,deck_emu MESA_SHADER_CACHE_DISABLE=false MESA_SHADER_CACHE_MAX_SIZE=512MB mesa_glthread=true WINEESYNC=0 MESA_VK_WSI_PRESENT_MODE=mailbox TU_DEBUG=${gpu.tuDebug} VKD3D_SHADER_MODEL=6_0 PULSE_LATENCY_MSEC=144 ${WowMachineIdentity.HOSTNAME_ENV}=${identity.computerName}$samsungEnv"
+    // Untested GPUs get a DXVK log next to the game so a failed start can be diagnosed.
+    val systemDriverEnv = if (gpu.usesSystemDriver) " DXVK_LOG_LEVEL=info DXVK_LOG_PATH=G:/$DXVK_LOG_DIR DXVK_HUD=devinfo,fps" else ""
+    val envVars = "WRAPPER_MAX_IMAGE_COUNT=0 ZINK_DESCRIPTORS=lazy ZINK_DEBUG=compact,deck_emu MESA_SHADER_CACHE_DISABLE=false MESA_SHADER_CACHE_MAX_SIZE=512MB mesa_glthread=true WINEESYNC=0 MESA_VK_WSI_PRESENT_MODE=mailbox TU_DEBUG=${gpu.tuDebug} VKD3D_SHADER_MODEL=6_0 PULSE_LATENCY_MSEC=144 ${WowMachineIdentity.HOSTNAME_ENV}=${identity.computerName}$samsungEnv$systemDriverEnv"
+    // The system driver needs BCn textures transcoded for it (Mali can't sample them) and the wrapper told to
+    // expose Vulkan 1.3, which DXVK 2.x requires.
+    val driverConfig = if (gpu.usesSystemDriver) {
+        "vulkanVersion=1.3,version=${gpu.driver},adrenotoolsTurnip=0,resourceType=auto,bcnEmulation=auto,bcnEmulationType=compute,bcnEmulationCache=0,presentMode=mailbox,gpuName=Device,quality=high"
+    } else {
+        "version=${gpu.driver},adrenotoolsTurnip=1,resourceType=buffer,bcnEmulation=auto,quality=high"
+    }
     return JSONObject().apply {
         put("id", CONTAINER_ID)
         put("name", "WoW Forever")
@@ -1273,7 +1300,7 @@ private fun containerConfig(gameRoot: File, gpu: GpuProfile, screenSize: String,
         put("envVars", envVars)
         put("graphicsDriver", "Wrapper")
         put("graphicsDriverVersion", gpu.driver)
-        put("graphicsDriverConfig", "version=${gpu.driver},adrenotoolsTurnip=1,resourceType=buffer,bcnEmulation=auto,quality=high")
+        put("graphicsDriverConfig", driverConfig)
         put("displayRenderer", "vulkan")
         put("dxwrapper", "dxvk-$DXVK_VERSION-1")
         put("dxwrapperConfig", "version=$DXVK_VERSION-1")
@@ -1375,9 +1402,11 @@ private fun portalOf(root: File) =
         ?: WowClientDownloader.readBuildInfo(File(root, BUILD_INFO))?.get("Branch")?.takeIf { it.isNotBlank() }?.uppercase()
         ?: WowClientDownloader.defaultBranch().uppercase()
 
-private fun installBundledComponents(context: Context, onStatus: (String) -> Unit) {
-    installDriver(context, DEFAULT_DRIVER, "turnip-wow-scheduler-test.zip", onStatus)
-    installDriver(context, ADRENO_8XX_DRIVER, "turnip-V32-RP6sched.zip", onStatus)
+private fun installBundledComponents(context: Context, gpu: GpuProfile, onStatus: (String) -> Unit) {
+    if (!gpu.usesSystemDriver) {
+        installDriver(context, DEFAULT_DRIVER, "turnip-wow-scheduler-test.zip", onStatus)
+        installDriver(context, ADRENO_8XX_DRIVER, "turnip-V32-RP6sched.zip", onStatus)
+    }
 
     val protonDir = File(ImageFs.getSharedProtonDir(context), PROTON_VERSION)
     if (!File(protonDir, "profile.json").exists() || !File(protonDir, "bin/wine").exists()) {
