@@ -1085,11 +1085,7 @@ enum class ShaderPatch(val label: String, val env: String) {
  */
 enum class InterfaceStyle(val label: String, val forcedConfig: Map<String, String>) {
     GAMEPAD("Gamepad", mapOf("GamePadEnable" to "\"1\"", "InputDeviceInterfaceStyle" to "\"1\"")),
-    // checkAddonVersion lets the launcher's own PhoneKeys add-on load whatever interface number the client is on.
-    KEYBOARD(
-        "Keyboard and mouse",
-        mapOf("GamePadEnable" to "\"0\"", "InputDeviceInterfaceStyle" to "\"0\"", "checkAddonVersion" to "\"0\""),
-    );
+    KEYBOARD("Keyboard and mouse", mapOf("GamePadEnable" to "\"0\"", "InputDeviceInterfaceStyle" to "\"0\""));
 
     companion object {
         private const val KEY = "interface_style"
@@ -1392,7 +1388,7 @@ private fun prepareLaunch(context: Context, gameRoot: File, gpu: GpuProfile, scr
     }
 
     HardwareKeymap.apply(gameRoot)
-    PhoneKeysAddon.sync(gameRoot, InterfaceStyle.current(context) == InterfaceStyle.KEYBOARD)
+    removePhoneKeysAddon(gameRoot)
 
     // DXVK only writes its log into a folder that already exists.
     // The same GPUs also get Wine's own log there, which is where a crash outside DXVK shows up.
@@ -1539,6 +1535,24 @@ internal fun ensureGameConfig(root: File, screenSize: String, region: GameRegion
         val kept = original.filterNot { line -> forced.keys.any { line.startsWith("SET $it ", ignoreCase = true) } }
         configWtf.writeText((kept + forcedLines).joinToString("\n") + "\n")
     }
+}
+
+/**
+ * One test build installed a "PhoneKeys" add-on and turned off the game's add-on version check so it would load.
+ * Both are undone here for installs that still have them.
+ */
+private fun removePhoneKeysAddon(gameRoot: File) {
+    val addon = File(gameRoot, "$FLAVOR_DIR/Interface/AddOns/PhoneKeys")
+    if (!addon.exists()) return
+    runCatching {
+        addon.deleteRecursively()
+        val configWtf = File(gameRoot, CONFIG_WTF)
+        if (configWtf.isFile) {
+            val lines = configWtf.readLines()
+            val kept = lines.filterNot { it.startsWith("SET checkAddonVersion ", ignoreCase = true) }
+            if (kept.size != lines.size) configWtf.writeText(kept.joinToString("\n") + "\n")
+        }
+    }.onFailure { Timber.w(it, "Couldn't remove the PhoneKeys add-on") }
 }
 
 private val RESOLUTION_KEYS = listOf("gxFullscreenResolution", "gxWindowedResolution")
