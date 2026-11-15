@@ -1338,6 +1338,8 @@ private fun prepareLaunch(context: Context, gameRoot: File, gpu: GpuProfile, scr
         }
     }
 
+    HardwareKeymap.apply(gameRoot)
+
     // DXVK only writes its log into a folder that already exists.
     // The same GPUs also get Wine's own log there, which is where a crash outside DXVK shows up.
     if (gpu.usesSystemDriver) {

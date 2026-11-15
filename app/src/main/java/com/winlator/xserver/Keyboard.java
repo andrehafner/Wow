@@ -1,6 +1,7 @@
 package com.winlator.xserver;
 
 import android.util.Log;
+import android.util.SparseArray;
 import android.view.InputDevice;
 import android.view.KeyEvent;
 
@@ -28,8 +29,31 @@ public class Keyboard {
         void onKeyRelease(byte keycode);
     }
 
+    /** Receives the name of a hardware key nothing is mapped to, so the player can find out what to remap. */
+    public interface UnmappedKeyListener {
+        void onUnmappedKey(String androidKeyName);
+    }
+
+    private static final int ALT_META = KeyEvent.META_ALT_ON | KeyEvent.META_ALT_LEFT_ON | KeyEvent.META_ALT_RIGHT_ON;
+    // The player's own remaps, by Android key code: one table for a key on its own, one for a key pressed with Alt.
+    private static volatile SparseArray<XKeycode> userKeys = new SparseArray<>();
+    private static volatile SparseArray<XKeycode> userAltKeys = new SparseArray<>();
+    private static volatile UnmappedKeyListener unmappedKeyListener;
+    // What each held hardware key was pressed as, so its release lifts that key whatever the modifiers are by then.
+    private final SparseArray<XKeycode> heldKeys = new SparseArray<>();
+    private boolean altSuppressed;
+
     public Keyboard(XServer xServer) {
         this.xServer = xServer;
+    }
+
+    public static void setUserKeymap(SparseArray<XKeycode> keys, SparseArray<XKeycode> altKeys) {
+        userKeys = keys;
+        userAltKeys = altKeys;
+    }
+
+    public static void setUnmappedKeyListener(UnmappedKeyListener listener) {
+        unmappedKeyListener = listener;
     }
 
     public Bitmask getModifiersMask() {
@@ -116,35 +140,100 @@ public class Keyboard {
     }
 
     public boolean onKeyEvent(KeyEvent event) {
-
         int action = event.getAction();
         int keyCode = event.getKeyCode();
-
-        if (keyCode >= keycodeMap.length)
-            return false;
-
-        XKeycode xKeycode = keycodeMap[keyCode];
-        if (xKeycode == null)
-            return false;
+        boolean isAltKey = keyCode == KeyEvent.KEYCODE_ALT_LEFT || keyCode == KeyEvent.KEYCODE_ALT_RIGHT;
 
         if (action == KeyEvent.ACTION_DOWN) {
+            // Alt was lifted for a key from its number-and-symbol layer; its own repeats mustn't press it again.
+            if (isAltKey && altSuppressed) return true;
+
+            XKeycode xKeycode;
+            int keysym;
+            boolean shift;
+            boolean altLayer = false;
+            XKeycode userKey = event.isAltPressed() ? userAltKeys.get(keyCode) : null;
+            if (userKey != null) altLayer = true;
+            else userKey = userKeys.get(keyCode);
+            int[] altLayerKey = userKey == null && event.isAltPressed() ? altLayerKey(event) : null;
+
+            if (userKey != null) {
+                xKeycode = userKey;
+                keysym = 0;
+                shift = false;
+            } else if (altLayerKey != null) {
+                // A keyboard with no number row (Unihertz Titan, BlackBerry) types digits and symbols as Alt+letter.
+                // The game has to see the key that character lives on, not Alt held with a letter.
+                xKeycode = XKeycode.values()[altLayerKey[0]];
+                keysym = event.getUnicodeChar();
+                shift = altLayerKey[1] == 1 && !isShiftHeld();
+                altLayer = true;
+            } else {
+                xKeycode = keyCode < keycodeMap.length ? keycodeMap[keyCode] : null;
+                if (xKeycode == null) {
+                    UnmappedKeyListener listener = unmappedKeyListener;
+                    if (listener != null && event.getRepeatCount() == 0) listener.onUnmappedKey(KeyEvent.keyCodeToString(keyCode));
+                    return false;
+                }
+                keysym = printableKeysym(event);
+                shift = needsSyntheticShift(event);
+            }
+
+            if (altLayer) {
+                xServer.injectKeyRelease(XKeycode.KEY_ALT_L);
+                xServer.injectKeyRelease(XKeycode.KEY_ALT_R);
+                altSuppressed = true;
+            }
+            XKeycode held = heldKeys.get(keyCode);
+            if (held != null && held != xKeycode) xServer.injectKeyRelease(held);
+            heldKeys.put(keyCode, xKeycode);
+
             // Hardware keyboards already repeat held keys: Android sends repeated ACTION_DOWNs
             // and stops them when the key is released or focus moves away. The X server's own
             // repeat timer is left off here so a held key isn't repeated twice, and a release
             // that never reaches us (e.g. focus moved mid-press) can't repeat a key forever.
-            boolean syntheticShift = needsSyntheticShift(event);
-            if (syntheticShift) xServer.injectKeyPress(XKeycode.KEY_SHIFT_L, 0, false);
-            xServer.injectKeyPress(xKeycode, printableKeysym(event), false);
-            if (syntheticShift) xServer.injectKeyRelease(XKeycode.KEY_SHIFT_L);
+            if (shift) xServer.injectKeyPress(XKeycode.KEY_SHIFT_L, 0, false);
+            xServer.injectKeyPress(xKeycode, keysym, false);
+            if (shift) xServer.injectKeyRelease(XKeycode.KEY_SHIFT_L);
         } else if (action == KeyEvent.ACTION_UP) {
+            if (isAltKey) altSuppressed = false;
+            XKeycode xKeycode = heldKeys.get(keyCode);
+            heldKeys.remove(keyCode);
+            if (xKeycode == null) xKeycode = keyCode < keycodeMap.length ? keycodeMap[keyCode] : null;
+            if (xKeycode == null) return false;
             xServer.injectKeyRelease(xKeycode);
         }
 
         return true;
     }
 
+    private boolean isShiftHeld() {
+        return pressedKeys.contains(XKeycode.KEY_SHIFT_L.getId()) || pressedKeys.contains(XKeycode.KEY_SHIFT_R.getId());
+    }
+
+    /**
+     * The PC key for the character Alt turns this key into, as {XKeycode ordinal, 1 if it needs Shift}, or null when
+     * Alt doesn't change what the key types.
+     */
+    private static int[] altLayerKey(KeyEvent event) {
+        int typed = event.getUnicodeChar();
+        if (typed <= 32 || typed >= 127 || typed == event.getUnicodeChar(event.getMetaState() & ~ALT_META)) return null;
+        if (typed >= '0' && typed <= '9') return new int[] {XKeycode.valueOf("KEY_" + (char) typed).ordinal(), 0};
+        int shifted = ")!@#$%^&*(".indexOf(typed);
+        if (shifted >= 0) return new int[] {XKeycode.valueOf("KEY_" + shifted).ordinal(), 1};
+        XKeycode[] keys = {
+            XKeycode.KEY_MINUS, XKeycode.KEY_EQUAL, XKeycode.KEY_BRACKET_LEFT, XKeycode.KEY_BRACKET_RIGHT, XKeycode.KEY_BACKSLASH,
+            XKeycode.KEY_SEMICOLON, XKeycode.KEY_APOSTROPHE, XKeycode.KEY_COMMA, XKeycode.KEY_PERIOD, XKeycode.KEY_SLASH, XKeycode.KEY_GRAVE,
+        };
+        int plain = "-=[]\\;',./`".indexOf(typed);
+        if (plain >= 0) return new int[] {keys[plain].ordinal(), 0};
+        int withShift = "_+{}|:\"<>?~".indexOf(typed);
+        if (withShift >= 0) return new int[] {keys[withShift].ordinal(), 1};
+        return null;
+    }
+
     private boolean needsSyntheticShift(KeyEvent event) {
-        if (pressedKeys.contains(XKeycode.KEY_SHIFT_L.getId()) || pressedKeys.contains(XKeycode.KEY_SHIFT_R.getId())) return false;
+        if (isShiftHeld()) return false;
         int keyCode = event.getKeyCode();
         return event.isShiftPressed() || keyCode == KeyEvent.KEYCODE_AT || keyCode == KeyEvent.KEYCODE_STAR || keyCode == KeyEvent.KEYCODE_POUND || keyCode == KeyEvent.KEYCODE_PLUS;
     }
