@@ -2627,23 +2627,43 @@ fun XServerScreen(
             }
         }
 
-        // One tap switches between the on-screen gamepad and touching the game directly, where a tap is a left
-        // click and a two-finger tap a right click. The label names what a tap switches to.
+        // Two always-reachable buttons. "Menu" presses Esc, which opens the game's menu (and its settings) on a
+        // device with no Esc key. The other switches between the on-screen gamepad and touching the game directly,
+        // where a tap is a left click and a two-finger tap a right click; its label names what a tap switches to.
         if (!showQuickMenu && !isEditMode && !showElementEditor && !keepPausedForEditor) {
-            Text(
-                text = if (isTouchscreenModeActive) "Gamepad" else "Touch",
-                color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.85f),
-                fontSize = 12.sp,
-                modifier = Modifier
-                    .align(Alignment.BottomStart)
-                    .padding(6.dp)
-                    .background(
-                        androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.5f),
-                        androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
-                    )
-                    .clickable { onQuickMenuItemSelected(QuickMenuAction.TOUCHSCREEN_MODE) }
-                    .padding(horizontal = 14.dp, vertical = 10.dp),
-            )
+            val cornerButton = Modifier
+                .padding(start = 6.dp, bottom = 6.dp)
+                .background(
+                    androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.5f),
+                    androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
+                )
+            val cornerText = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.85f)
+            Row(modifier = Modifier.align(Alignment.BottomStart)) {
+                Text(
+                    text = if (isTouchscreenModeActive) "Gamepad" else "Touch",
+                    color = cornerText,
+                    fontSize = 12.sp,
+                    modifier = cornerButton
+                        .clickable { onQuickMenuItemSelected(QuickMenuAction.TOUCHSCREEN_MODE) }
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                )
+                Text(
+                    text = "Menu",
+                    color = cornerText,
+                    fontSize = 12.sp,
+                    modifier = cornerButton
+                        .clickable {
+                            val xServer = xServerView?.getxServer() ?: return@clickable
+                            xServer.injectKeyPress(com.winlator.xserver.XKeycode.KEY_ESC)
+                            scope.launch {
+                                // Held briefly: a press and release in the same frame can be missed.
+                                delay(80)
+                                xServer.injectKeyRelease(com.winlator.xserver.XKeycode.KEY_ESC)
+                            }
+                        }
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                )
+            }
         }
 
         // Floating toolbar for edit mode (always visible in edit mode)

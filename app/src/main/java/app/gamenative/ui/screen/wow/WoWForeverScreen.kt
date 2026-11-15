@@ -1085,7 +1085,11 @@ enum class ShaderPatch(val label: String, val env: String) {
  */
 enum class InterfaceStyle(val label: String, val forcedConfig: Map<String, String>) {
     GAMEPAD("Gamepad", mapOf("GamePadEnable" to "\"1\"", "InputDeviceInterfaceStyle" to "\"1\"")),
-    KEYBOARD("Keyboard and mouse", mapOf("GamePadEnable" to "\"0\"", "InputDeviceInterfaceStyle" to "\"0\""));
+    // checkAddonVersion lets the launcher's own PhoneKeys add-on load whatever interface number the client is on.
+    KEYBOARD(
+        "Keyboard and mouse",
+        mapOf("GamePadEnable" to "\"0\"", "InputDeviceInterfaceStyle" to "\"0\"", "checkAddonVersion" to "\"0\""),
+    );
 
     companion object {
         private const val KEY = "interface_style"
@@ -1388,6 +1392,7 @@ private fun prepareLaunch(context: Context, gameRoot: File, gpu: GpuProfile, scr
     }
 
     HardwareKeymap.apply(gameRoot)
+    PhoneKeysAddon.sync(gameRoot, InterfaceStyle.current(context) == InterfaceStyle.KEYBOARD)
 
     // DXVK only writes its log into a folder that already exists.
     // The same GPUs also get Wine's own log there, which is where a crash outside DXVK shows up.
