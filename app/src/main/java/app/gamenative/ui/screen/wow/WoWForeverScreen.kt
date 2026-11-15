@@ -107,6 +107,8 @@ fun WoWForeverScreen(
     var hasSavedLogin by remember { mutableStateOf(BattleNetSignIn.load(context) != null) }
     var region by remember(gamePath, files) { mutableStateOf(GameRegion.current(context, gamePath)) }
     var resolution by remember { mutableStateOf(RenderResolution.current(context, gpu.screenSize)) }
+    var textureMode by remember { mutableStateOf(TextureMode.current(context)) }
+    var vulkanWrapper by remember { mutableStateOf(VulkanWrapper.current(context)) }
     var showLoginDialog by remember { mutableStateOf(false) }
     var statusText by remember { mutableStateOf(READY_STATUS) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
@@ -512,6 +514,18 @@ fun WoWForeverScreen(
                         OptionMenu("Resolution: ${resolution.label}", Icons.Default.AspectRatio, RenderResolution.entries, resolution, { it.label }, !isLaunching) {
                             RenderResolution.save(context, it)
                             resolution = it
+                        }
+                    }
+                    if (gpu.usesSystemDriver) {
+                        Row {
+                            OptionMenu("Textures: ${textureMode.label}", Icons.Default.AspectRatio, TextureMode.entries, textureMode, { it.label }, !isLaunching) {
+                                TextureMode.save(context, it)
+                                textureMode = it
+                            }
+                            OptionMenu("Driver layer: ${vulkanWrapper.label}", Icons.Default.AspectRatio, VulkanWrapper.entries, vulkanWrapper, { it.label }, !isLaunching) {
+                                VulkanWrapper.save(context, it)
+                                vulkanWrapper = it
+                            }
                         }
                     }
 
@@ -989,6 +1003,44 @@ enum class RenderResolution(val size: String, val label: String) {
     }
 }
 
+/**
+ * How the Vulkan wrapper feeds BCn (DXT) textures to a GPU that can't sample them, which is every Mali. Which one a
+ * given driver needs isn't known in advance, so the player can switch between them.
+ */
+enum class TextureMode(val label: String, val config: String) {
+    CPU_ALL("CPU, all formats", "bcnEmulation=full,bcnEmulationType=software"),
+    CPU_AUTO("CPU, automatic", "bcnEmulation=auto,bcnEmulationType=software"),
+    GPU_ALL("GPU, all formats", "bcnEmulation=full,bcnEmulationType=compute"),
+    GPU_AUTO("GPU, automatic", "bcnEmulation=auto,bcnEmulationType=compute");
+
+    companion object {
+        private const val KEY = "texture_mode"
+
+        fun current(context: Context): TextureMode =
+            prefs(context).getString(KEY, null)?.let { saved -> entries.firstOrNull { it.name == saved } } ?: CPU_ALL
+
+        fun save(context: Context, mode: TextureMode) {
+            prefs(context).edit().putString(KEY, mode.name).apply()
+        }
+    }
+}
+
+/** The build of the Vulkan wrapper that sits between DXVK and the system driver. They differ in what they emulate. */
+enum class VulkanWrapper(val label: String, val driver: String) {
+    STANDARD("Standard", "Wrapper"), V2("v2", "Wrapper-v2"), LEEGAO("Leegao", "Wrapper-leegao"), GAMENATIVE("GameNative", "Wrapper-gamenative");
+
+    companion object {
+        private const val KEY = "vulkan_wrapper"
+
+        fun current(context: Context): VulkanWrapper =
+            prefs(context).getString(KEY, null)?.let { saved -> entries.firstOrNull { it.name == saved } } ?: STANDARD
+
+        fun save(context: Context, wrapper: VulkanWrapper) {
+            prefs(context).edit().putString(KEY, wrapper.name).apply()
+        }
+    }
+}
+
 object GamePath {
     private const val KEY_GAME_PATH = "game_path"
 
@@ -1269,7 +1321,7 @@ private fun prepareLaunch(context: Context, gameRoot: File, gpu: GpuProfile, scr
 
     onStatus("Configuring ${gpu.label} container...")
     val containerManager = ContainerManager(context)
-    val config = containerConfig(gameRoot, gpu, screenSize, WowMachineIdentity.load(context))
+    val config = containerConfig(gameRoot, gpu, screenSize, WowMachineIdentity.load(context), TextureMode.current(context), VulkanWrapper.current(context))
     val container = containerManager.getContainerById(CONTAINER_ID)
     if (container == null) {
         onStatus("Creating prefix environment (first boot)...")
@@ -1287,7 +1339,14 @@ private fun prepareLaunch(context: Context, gameRoot: File, gpu: GpuProfile, scr
     return CONTAINER_ID
 }
 
-private fun containerConfig(gameRoot: File, gpu: GpuProfile, screenSize: String, identity: WowMachineIdentity): JSONObject {
+private fun containerConfig(
+    gameRoot: File,
+    gpu: GpuProfile,
+    screenSize: String,
+    identity: WowMachineIdentity,
+    textureMode: TextureMode,
+    vulkanWrapper: VulkanWrapper,
+): JSONObject {
     val samsungEnv = if (Build.MANUFACTURER.equals("samsung", ignoreCase = true)) " FD_DEV_FEATURES=enable_tp_ubwc_flag_hint=1" else ""
     // Untested GPUs get a DXVK log next to the game so a failed start can be diagnosed.
     val systemDriverEnv = if (gpu.usesSystemDriver) " DXVK_LOG_LEVEL=info DXVK_LOG_PATH=G:/$DXVK_LOG_DIR DXVK_HUD=devinfo,fps WOW_LOG_TO_GAME=1" else ""
@@ -1295,7 +1354,7 @@ private fun containerConfig(gameRoot: File, gpu: GpuProfile, screenSize: String,
     // The system driver needs BCn textures transcoded for it (Mali can't sample them) and the wrapper told to
     // expose Vulkan 1.3, which DXVK 2.x requires.
     val driverConfig = if (gpu.usesSystemDriver) {
-        "vulkanVersion=1.3,version=${gpu.driver},adrenotoolsTurnip=0,resourceType=auto,bcnEmulation=auto,bcnEmulationType=compute,bcnEmulationCache=0,presentMode=mailbox,gpuName=Device,quality=high"
+        "vulkanVersion=1.3,version=${gpu.driver},adrenotoolsTurnip=0,resourceType=auto,${textureMode.config},bcnEmulationCache=0,presentMode=mailbox,gpuName=Device,quality=high"
     } else {
         "version=${gpu.driver},adrenotoolsTurnip=1,resourceType=buffer,bcnEmulation=auto,quality=high"
     }
@@ -1304,7 +1363,7 @@ private fun containerConfig(gameRoot: File, gpu: GpuProfile, screenSize: String,
         put("name", "WoW Forever")
         put("screenSize", screenSize)
         put("envVars", envVars)
-        put("graphicsDriver", "Wrapper")
+        put("graphicsDriver", if (gpu.usesSystemDriver) vulkanWrapper.driver else "Wrapper")
         put("graphicsDriverVersion", gpu.driver)
         put("graphicsDriverConfig", driverConfig)
         put("displayRenderer", "vulkan")
