@@ -109,6 +109,7 @@ fun WoWForeverScreen(
     var resolution by remember { mutableStateOf(RenderResolution.current(context, gpu.screenSize)) }
     var textureMode by remember { mutableStateOf(TextureMode.current(context)) }
     var vulkanWrapper by remember { mutableStateOf(VulkanWrapper.current(context)) }
+    var shaderPatch by remember { mutableStateOf(ShaderPatch.current(context)) }
     var showLoginDialog by remember { mutableStateOf(false) }
     var statusText by remember { mutableStateOf(READY_STATUS) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
@@ -526,6 +527,10 @@ fun WoWForeverScreen(
                                 VulkanWrapper.save(context, it)
                                 vulkanWrapper = it
                             }
+                        }
+                        OptionMenu("Shader patching: ${shaderPatch.label}", Icons.Default.AspectRatio, ShaderPatch.entries, shaderPatch, { it.label }, !isLaunching) {
+                            ShaderPatch.save(context, it)
+                            shaderPatch = it
                         }
                     }
 
@@ -1041,6 +1046,25 @@ enum class VulkanWrapper(val label: String, val driver: String) {
     }
 }
 
+/**
+ * Whether the Vulkan wrapper rewrites OpConstantComposite in each shader. On a Mali-G615 that pass read past the end
+ * of the game's first shader and took the process down, so it is off unless the player turns it back on.
+ */
+enum class ShaderPatch(val label: String, val env: String) {
+    OFF("Off", " WRAPPER_NO_PATCH_OPCONSTCOMP=1"), ON("On", "");
+
+    companion object {
+        private const val KEY = "shader_patch"
+
+        fun current(context: Context): ShaderPatch =
+            prefs(context).getString(KEY, null)?.let { saved -> entries.firstOrNull { it.name == saved } } ?: OFF
+
+        fun save(context: Context, patch: ShaderPatch) {
+            prefs(context).edit().putString(KEY, patch.name).apply()
+        }
+    }
+}
+
 object GamePath {
     private const val KEY_GAME_PATH = "game_path"
 
@@ -1321,7 +1345,7 @@ private fun prepareLaunch(context: Context, gameRoot: File, gpu: GpuProfile, scr
 
     onStatus("Configuring ${gpu.label} container...")
     val containerManager = ContainerManager(context)
-    val config = containerConfig(gameRoot, gpu, screenSize, WowMachineIdentity.load(context), TextureMode.current(context), VulkanWrapper.current(context))
+    val config = containerConfig(gameRoot, gpu, screenSize, WowMachineIdentity.load(context), TextureMode.current(context), VulkanWrapper.current(context), ShaderPatch.current(context))
     val container = containerManager.getContainerById(CONTAINER_ID)
     if (container == null) {
         onStatus("Creating prefix environment (first boot)...")
@@ -1346,10 +1370,11 @@ private fun containerConfig(
     identity: WowMachineIdentity,
     textureMode: TextureMode,
     vulkanWrapper: VulkanWrapper,
+    shaderPatch: ShaderPatch,
 ): JSONObject {
     val samsungEnv = if (Build.MANUFACTURER.equals("samsung", ignoreCase = true)) " FD_DEV_FEATURES=enable_tp_ubwc_flag_hint=1" else ""
     // Untested GPUs get a DXVK log next to the game so a failed start can be diagnosed.
-    val systemDriverEnv = if (gpu.usesSystemDriver) " DXVK_LOG_LEVEL=info DXVK_LOG_PATH=G:/$DXVK_LOG_DIR DXVK_HUD=devinfo,fps WOW_LOG_TO_GAME=1" else ""
+    val systemDriverEnv = if (gpu.usesSystemDriver) " DXVK_LOG_LEVEL=info DXVK_LOG_PATH=G:/$DXVK_LOG_DIR DXVK_HUD=devinfo,fps WOW_LOG_TO_GAME=1${shaderPatch.env}" else ""
     val envVars = "WRAPPER_MAX_IMAGE_COUNT=0 ZINK_DESCRIPTORS=lazy ZINK_DEBUG=compact,deck_emu MESA_SHADER_CACHE_DISABLE=false MESA_SHADER_CACHE_MAX_SIZE=512MB mesa_glthread=true WINEESYNC=0 MESA_VK_WSI_PRESENT_MODE=mailbox TU_DEBUG=${gpu.tuDebug} VKD3D_SHADER_MODEL=6_0 PULSE_LATENCY_MSEC=144 ${WowMachineIdentity.HOSTNAME_ENV}=${identity.computerName}$samsungEnv$systemDriverEnv"
     // The system driver needs BCn textures transcoded for it (Mali can't sample them) and the wrapper told to
     // expose Vulkan 1.3, which DXVK 2.x requires.
