@@ -2627,6 +2627,25 @@ fun XServerScreen(
             }
         }
 
+        // One tap switches between the on-screen gamepad and touching the game directly, where a tap is a left
+        // click and a two-finger tap a right click. The label names what a tap switches to.
+        if (!showQuickMenu && !isEditMode && !showElementEditor && !keepPausedForEditor) {
+            Text(
+                text = if (isTouchscreenModeActive) "Gamepad" else "Touch",
+                color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.85f),
+                fontSize = 12.sp,
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(6.dp)
+                    .background(
+                        androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.5f),
+                        androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
+                    )
+                    .clickable { onQuickMenuItemSelected(QuickMenuAction.TOUCHSCREEN_MODE) }
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
+            )
+        }
+
         // Floating toolbar for edit mode (always visible in edit mode)
         if (isEditMode && areControlsVisible) {
             EditModeToolbar(
