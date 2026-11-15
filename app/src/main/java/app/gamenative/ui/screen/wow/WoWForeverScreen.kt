@@ -65,6 +65,7 @@ import com.winlator.container.ContainerManager
 import com.winlator.contents.ContentProfile
 import com.winlator.contents.ContentsManager
 import com.winlator.core.FileUtils
+import app.gamenative.PrefManager
 import com.winlator.core.GPUInformation
 import com.winlator.core.TarCompressorUtils
 import com.winlator.xenvironment.ImageFs
@@ -1259,7 +1260,12 @@ private fun prepareLaunch(context: Context, gameRoot: File, gpu: GpuProfile, scr
     }
 
     // DXVK only writes its log into a folder that already exists.
-    if (gpu.usesSystemDriver) File(gameRoot, DXVK_LOG_DIR).mkdirs()
+    // The same GPUs also get Wine's own log there, which is where a crash outside DXVK shows up.
+    if (gpu.usesSystemDriver) {
+        File(gameRoot, DXVK_LOG_DIR).mkdirs()
+        PrefManager.enableWineDebug = true
+        PrefManager.wineDebugChannels = "err,warn,seh,loaddll"
+    }
 
     onStatus("Configuring ${gpu.label} container...")
     val containerManager = ContainerManager(context)
@@ -1284,7 +1290,7 @@ private fun prepareLaunch(context: Context, gameRoot: File, gpu: GpuProfile, scr
 private fun containerConfig(gameRoot: File, gpu: GpuProfile, screenSize: String, identity: WowMachineIdentity): JSONObject {
     val samsungEnv = if (Build.MANUFACTURER.equals("samsung", ignoreCase = true)) " FD_DEV_FEATURES=enable_tp_ubwc_flag_hint=1" else ""
     // Untested GPUs get a DXVK log next to the game so a failed start can be diagnosed.
-    val systemDriverEnv = if (gpu.usesSystemDriver) " DXVK_LOG_LEVEL=info DXVK_LOG_PATH=G:/$DXVK_LOG_DIR DXVK_HUD=devinfo,fps" else ""
+    val systemDriverEnv = if (gpu.usesSystemDriver) " DXVK_LOG_LEVEL=info DXVK_LOG_PATH=G:/$DXVK_LOG_DIR DXVK_HUD=devinfo,fps WOW_LOG_TO_GAME=1" else ""
     val envVars = "WRAPPER_MAX_IMAGE_COUNT=0 ZINK_DESCRIPTORS=lazy ZINK_DEBUG=compact,deck_emu MESA_SHADER_CACHE_DISABLE=false MESA_SHADER_CACHE_MAX_SIZE=512MB mesa_glthread=true WINEESYNC=0 MESA_VK_WSI_PRESENT_MODE=mailbox TU_DEBUG=${gpu.tuDebug} VKD3D_SHADER_MODEL=6_0 PULSE_LATENCY_MSEC=144 ${WowMachineIdentity.HOSTNAME_ENV}=${identity.computerName}$samsungEnv$systemDriverEnv"
     // The system driver needs BCn textures transcoded for it (Mali can't sample them) and the wrapper told to
     // expose Vulkan 1.3, which DXVK 2.x requires.

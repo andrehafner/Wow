@@ -3620,7 +3620,12 @@ private fun setupXEnvironment(
     var logFile: File? = null
     val captureLogs = enableWineDebug || enableBox86Logs
     if (captureLogs) {
-        val wineLogDir = File(context.getExternalFilesDir(null), "wine_logs")
+        // WOW_LOG_TO_GAME puts the log somewhere the player can reach: Android hides Android/data from file managers.
+        val wineLogDir = if (EnvVars(container.envVars).get("WOW_LOG_TO_GAME") == "1") {
+            File(app.gamenative.ui.screen.wow.GamePath.load(context), "DxvkLogs")
+        } else {
+            File(context.getExternalFilesDir(null), "wine_logs")
+        }
         wineLogDir.mkdirs()
         logFile = File(wineLogDir, "wine_debug.log")
         if (logFile.exists()) logFile.delete()
