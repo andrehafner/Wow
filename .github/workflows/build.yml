@@ -1,5 +1,6 @@
-# Builds a test APK on every push and attaches it to the run as an artifact. Signed with the debug key unless
-# app/keystores/keystore.properties exists, so it can't update (or be updated by) a release-signed install.
+# Builds a test APK on every push and attaches it to the run as an artifact. Signed with the throwaway test key in
+# tools/test-signing, so each test build installs over the previous one. That key and its password are public on
+# purpose: it protects nothing, and a build signed with it can't update (or be updated by) a release-signed install.
 name: Build test APK
 
 on:
@@ -40,6 +41,17 @@ jobs:
       # The Secrets Gradle plugin refuses to configure the project without local.properties.
       - name: Write local.properties
         run: echo "sdk.dir=$ANDROID_HOME" > local.properties
+
+      - name: Set up test signing
+        run: |
+          mkdir -p app/keystores
+          cp tools/test-signing/test.p12 app/keystores/test.p12
+          {
+            echo "storeFile=keystores/test.p12"
+            echo "storePassword=wowtest"
+            echo "keyAlias=wowtest"
+            echo "keyPassword=wowtest"
+          } > app/keystores/keystore.properties
 
       - name: Build
         run: ./gradlew --no-daemon :app:assembleModernRelease

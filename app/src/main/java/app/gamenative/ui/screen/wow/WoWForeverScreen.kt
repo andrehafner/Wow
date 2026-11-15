@@ -1030,7 +1030,10 @@ enum class TextureMode(val label: String, val config: String) {
     }
 }
 
-/** The build of the Vulkan wrapper that sits between DXVK and the system driver. They differ in what they emulate. */
+/**
+ * The build of the Vulkan wrapper that sits between DXVK and the system driver. They differ in what they emulate.
+ * GameNative's own is what GameNative picks for a non-Adreno GPU, so it is the default here too.
+ */
 enum class VulkanWrapper(val label: String, val driver: String) {
     STANDARD("Standard", "Wrapper"), V2("v2", "Wrapper-v2"), LEEGAO("Leegao", "Wrapper-leegao"), GAMENATIVE("GameNative", "Wrapper-gamenative");
 
@@ -1038,7 +1041,7 @@ enum class VulkanWrapper(val label: String, val driver: String) {
         private const val KEY = "vulkan_wrapper"
 
         fun current(context: Context): VulkanWrapper =
-            prefs(context).getString(KEY, null)?.let { saved -> entries.firstOrNull { it.name == saved } } ?: STANDARD
+            prefs(context).getString(KEY, null)?.let { saved -> entries.firstOrNull { it.name == saved } } ?: GAMENATIVE
 
         fun save(context: Context, wrapper: VulkanWrapper) {
             prefs(context).edit().putString(KEY, wrapper.name).apply()
@@ -1340,7 +1343,7 @@ private fun prepareLaunch(context: Context, gameRoot: File, gpu: GpuProfile, scr
     if (gpu.usesSystemDriver) {
         File(gameRoot, DXVK_LOG_DIR).mkdirs()
         PrefManager.enableWineDebug = true
-        PrefManager.wineDebugChannels = "err,warn,seh,loaddll"
+        PrefManager.wineDebugChannels = "err,warn,fixme,loaddll"
     }
 
     onStatus("Configuring ${gpu.label} container...")
