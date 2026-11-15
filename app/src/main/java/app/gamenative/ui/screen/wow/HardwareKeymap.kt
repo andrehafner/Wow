@@ -22,7 +22,11 @@ object HardwareKeymap {
         # Remaps for a built-in hardware keyboard. One per line:
         #
         #     <phone key> = <PC key>
-        #     ALT+<phone key> = <PC key>      (only while Alt is held)
+        #     ALT+<phone key> = <PC key>      (only while Alt is held; the game doesn't see Alt)
+        #     SHIFT+<phone key> = <PC key>    (only while Shift is held; the game doesn't see Shift)
+        #
+        # A SHIFT+ line takes that capital letter away from chat. To keep capitals, bind Shift+letter inside
+        # WoW's own Key Bindings menu instead.
         #
         # Phone keys are Android key names without KEYCODE_: A-Z, 0-9, SYM, FUNCTION, SPACE, ENTER, DEL (backspace),
         # SHIFT_LEFT, SHIFT_RIGHT, ALT_LEFT, CTRL_LEFT, VOLUME_UP ... A key the game ignored is named in
@@ -48,8 +52,8 @@ object HardwareKeymap {
             Timber.w(it, "Couldn't read $FILE_NAME, using the default key remaps")
             template.lines()
         }
-        val (keys, altKeys) = parse(lines)
-        Keyboard.setUserKeymap(keys, altKeys)
+        val keymap = parse(lines)
+        Keyboard.setUserKeymap(keymap.keys, keymap.altKeys, keymap.shiftKeys)
 
         val unmapped = File(gameRoot, UNMAPPED_FILE_NAME)
         val seen = HashSet<String>()
@@ -60,23 +64,32 @@ object HardwareKeymap {
         }
     }
 
-    internal fun parse(lines: List<String>): Pair<SparseArray<XKeycode>, SparseArray<XKeycode>> {
-        val keys = SparseArray<XKeycode>()
-        val altKeys = SparseArray<XKeycode>()
+    internal class Keymap(
+        val keys: SparseArray<XKeycode> = SparseArray(),
+        val altKeys: SparseArray<XKeycode> = SparseArray(),
+        val shiftKeys: SparseArray<XKeycode> = SparseArray(),
+    )
+
+    internal fun parse(lines: List<String>): Keymap {
+        val keymap = Keymap()
         for (raw in lines) {
             val line = raw.substringBefore('#').trim()
             if (line.isEmpty()) continue
             val from = line.substringBefore('=').trim().uppercase()
             val to = line.substringAfter('=', "").trim().uppercase()
-            val withAlt = from.startsWith("ALT+")
-            val keyCode = KeyEvent.keyCodeFromString("KEYCODE_" + from.removePrefix("ALT+").trim())
+            val table = when {
+                from.startsWith("ALT+") -> keymap.altKeys
+                from.startsWith("SHIFT+") -> keymap.shiftKeys
+                else -> keymap.keys
+            }
+            val keyCode = KeyEvent.keyCodeFromString("KEYCODE_" + from.substringAfter('+').trim())
             val target = runCatching { XKeycode.valueOf("KEY_$to") }.getOrNull()
             if (keyCode == KeyEvent.KEYCODE_UNKNOWN || target == null) {
                 Timber.w("Ignoring $FILE_NAME line: $raw")
                 continue
             }
-            (if (withAlt) altKeys else keys).put(keyCode, target)
+            table.put(keyCode, target)
         }
-        return keys to altKeys
+        return keymap
     }
 }

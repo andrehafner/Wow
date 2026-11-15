@@ -38,18 +38,21 @@ public class Keyboard {
     // The player's own remaps, by Android key code: one table for a key on its own, one for a key pressed with Alt.
     private static volatile SparseArray<XKeycode> userKeys = new SparseArray<>();
     private static volatile SparseArray<XKeycode> userAltKeys = new SparseArray<>();
+    private static volatile SparseArray<XKeycode> userShiftKeys = new SparseArray<>();
     private static volatile UnmappedKeyListener unmappedKeyListener;
     // What each held hardware key was pressed as, so its release lifts that key whatever the modifiers are by then.
     private final SparseArray<XKeycode> heldKeys = new SparseArray<>();
     private boolean altSuppressed;
+    private boolean shiftSuppressed;
 
     public Keyboard(XServer xServer) {
         this.xServer = xServer;
     }
 
-    public static void setUserKeymap(SparseArray<XKeycode> keys, SparseArray<XKeycode> altKeys) {
+    public static void setUserKeymap(SparseArray<XKeycode> keys, SparseArray<XKeycode> altKeys, SparseArray<XKeycode> shiftKeys) {
         userKeys = keys;
         userAltKeys = altKeys;
+        userShiftKeys = shiftKeys;
     }
 
     public static void setUnmappedKeyListener(UnmappedKeyListener listener) {
@@ -143,17 +146,21 @@ public class Keyboard {
         int action = event.getAction();
         int keyCode = event.getKeyCode();
         boolean isAltKey = keyCode == KeyEvent.KEYCODE_ALT_LEFT || keyCode == KeyEvent.KEYCODE_ALT_RIGHT;
+        boolean isShiftKey = keyCode == KeyEvent.KEYCODE_SHIFT_LEFT || keyCode == KeyEvent.KEYCODE_SHIFT_RIGHT;
 
         if (action == KeyEvent.ACTION_DOWN) {
             // Alt was lifted for a key from its number-and-symbol layer; its own repeats mustn't press it again.
             if (isAltKey && altSuppressed) return true;
+            if (isShiftKey && shiftSuppressed) return true;
 
             XKeycode xKeycode;
             int keysym;
             boolean shift;
             boolean altLayer = false;
+            boolean shiftLayer = false;
             XKeycode userKey = event.isAltPressed() ? userAltKeys.get(keyCode) : null;
             if (userKey != null) altLayer = true;
+            else if (event.isShiftPressed() && (userKey = userShiftKeys.get(keyCode)) != null) shiftLayer = true;
             else userKey = userKeys.get(keyCode);
             int[] altLayerKey = userKey == null && event.isAltPressed() ? altLayerKey(event) : null;
 
@@ -184,6 +191,12 @@ public class Keyboard {
                 xServer.injectKeyRelease(XKeycode.KEY_ALT_R);
                 altSuppressed = true;
             }
+            if (shiftLayer) {
+                // The remap stands for the key on its own: the game mustn't see Shift held with it.
+                xServer.injectKeyRelease(XKeycode.KEY_SHIFT_L);
+                xServer.injectKeyRelease(XKeycode.KEY_SHIFT_R);
+                shiftSuppressed = true;
+            }
             XKeycode held = heldKeys.get(keyCode);
             if (held != null && held != xKeycode) xServer.injectKeyRelease(held);
             heldKeys.put(keyCode, xKeycode);
@@ -197,6 +210,7 @@ public class Keyboard {
             if (shift) xServer.injectKeyRelease(XKeycode.KEY_SHIFT_L);
         } else if (action == KeyEvent.ACTION_UP) {
             if (isAltKey) altSuppressed = false;
+            if (isShiftKey) shiftSuppressed = false;
             XKeycode xKeycode = heldKeys.get(keyCode);
             heldKeys.remove(keyCode);
             if (xKeycode == null) xKeycode = keyCode < keycodeMap.length ? keycodeMap[keyCode] : null;
