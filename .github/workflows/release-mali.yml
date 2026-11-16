@@ -1,8 +1,15 @@
-# Builds the APK from the chosen ref, signs it with the public test key in tools/test-signing, and publishes it as a
-# GitHub release. Runs when .github/RELEASE_TAG changes on main (it holds the tag to create), or by hand. The test key is the one "Build test APK" uses, so a release installs over a test
-# build and the other way round; because that key is public, the release notes should say where the APK came from.
-# For a privately signed release use release.yml, which takes its key from the repository's Actions secrets.
-name: Publish test-signed release
+# Builds the APK, signs it with the release key from the repository's Actions secrets, and publishes it as a GitHub
+# release. Runs when .github/RELEASE_TAG changes on main (it holds the tag to create), or by hand.
+#
+# Secrets (Settings > Secrets and variables > Actions), the same four release.yml uses:
+#   RELEASE_KEYSTORE_BASE64  the keystore file, base64-encoded
+#   RELEASE_STORE_PASSWORD   the keystore password
+#   RELEASE_KEY_ALIAS        the key alias
+#   RELEASE_KEY_PASSWORD     the key password
+#
+# It never falls back to the public test key in tools/test-signing: a release anyone could re-sign would let a
+# look-alike APK install over it.
+name: Publish Mali release
 
 on:
   push:
@@ -24,7 +31,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: release-test
+  group: release-mali
   cancel-in-progress: false
 
 jobs:
@@ -54,19 +61,37 @@ jobs:
       - name: Write local.properties
         run: echo "sdk.dir=$ANDROID_HOME" > local.properties
 
-      - name: Set up test signing
+      - name: Set up signing
+        env:
+          KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
         run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then echo "::error::RELEASE_KEYSTORE_BASE64 is not set"; exit 1; fi
           mkdir -p app/keystores
-          cp tools/test-signing/test.p12 app/keystores/test.p12
+          echo "$KEYSTORE_BASE64" | base64 -d > app/keystores/release.p12
           {
-            echo "storeFile=keystores/test.p12"
-            echo "storePassword=wowtest"
-            echo "keyAlias=wowtest"
-            echo "keyPassword=wowtest"
+            echo "storeFile=keystores/release.p12"
+            echo "storePassword=$STORE_PASSWORD"
+            echo "keyAlias=$KEY_ALIAS"
+            echo "keyPassword=$KEY_PASSWORD"
           } > app/keystores/keystore.properties
 
       - name: Build
         run: ./gradlew --no-daemon :app:assembleModernRelease
+
+      - name: Verify the signature
+        run: |
+          apk=app/build/outputs/apk/modern/release/app-modern-release.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs "$apk" | tee certs.txt
+          if grep -q -e "CN=Android Debug" -e "CN=WoW Forever Mali test builds" certs.txt; then
+            echo "::error::APK is signed with a debug or test key"; exit 1
+          fi
+
+      - name: Remove signing files
+        if: always()
+        run: rm -rf app/keystores/release.p12 app/keystores/keystore.properties
 
       - name: Publish the release
         env:

@@ -20,9 +20,8 @@ are untested. Snapdragon devices behave as upstream.
 
 Get `WoW-Forever-Mali.apk` from the [releases page](https://github.com/andrehafner/Wow/releases).
 
-The APK is signed with the key in `tools/test-signing`, which is public on purpose so that test builds install over
-each other. Because anyone can sign with that key, only install APKs from this repository's releases page. An APK
-from this fork can't update an upstream install or be updated by one.
+Releases are signed with a private key. Only install APKs from this repository's releases page. An APK from this
+fork can't update an upstream install or be updated by one.
 
 ## Non-Adreno GPUs
 
@@ -61,9 +60,11 @@ The GPU texture modes corrupt textures on that device. Diagnostics, when on, wri
 
 ## Builds
 
-- **Build test APK** runs on every push to a branch other than `main` and attaches the APK to the run.
-- **Publish test-signed release** publishes a release when `.github/RELEASE_TAG` changes on `main`; that file holds
-  the tag to create.
+- **Build test APK** runs on every push to a branch other than `main` and attaches the APK to the run. Test builds
+  are signed with the key in `tools/test-signing`, which is public on purpose so they install over each other. They
+  can't install over a release or the other way round, and shouldn't be installed from anywhere but this repository.
+- **Publish Mali release** publishes a release when `.github/RELEASE_TAG` changes on `main`; that file holds the tag
+  to create. It signs with the release key held in the repository's Actions secrets.
 
 ## License
 

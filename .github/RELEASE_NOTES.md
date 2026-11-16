@@ -13,6 +13,6 @@ World of Warcraft: Forever on non-Adreno GPUs and phones with a built-in keyboar
 - Keyboard-and-mouse interface option
 - On-screen Touch and Menu buttons
 
-**Signing:** this APK is signed with the public test key in `tools/test-signing`, so it installs over the test builds. Because that key is public, only install this APK from this repository's releases page.
+**Upgrading from v2.4.2-mali.1 or a test build:** uninstall it first. Those were signed with a public test key and this release is signed with a private one, so Android won't install it over them. Your game files stay in place.
 
 Fork of [jaredgei/wow-forever-android](https://github.com/jaredgei/wow-forever-android), built on GameNative. Unofficial; not affiliated with Blizzard.
