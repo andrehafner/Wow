@@ -1,9 +1,9 @@
 # WoW Forever for Android
 
-> **This fork** adds an experimental path for non-Adreno GPUs (Mali, e.g. the Unihertz Titan 2). On those devices the
-> game renders through the phone's own Vulkan driver instead of Turnip, defaults to 540p, and writes DXVK logs to a
-> `DxvkLogs` folder inside the game folder. It is untested beyond confirming that DXVK starts on a Mali-G615. Adreno
-> devices behave as upstream. Test APKs are built by the "Build test APK" workflow on every push.
+> **This fork** adds experimental support for non-Adreno (Mali) GPUs and for phones with a built-in keyboard. It was
+> developed and tested on one device, a **Unihertz Titan 2** (Dimensity 7300, Mali-G615 MC2), where the game reaches
+> the world at roughly 10-35 fps on minimum settings. Snapdragon devices behave as upstream. See
+> [What this fork changes](#what-this-fork-changes) below.
 
 Play **World of Warcraft: Forever** on Snapdragon Android handhelds as a normal Android app. You tap the icon, press Play, and the game runs.
 
@@ -12,6 +12,34 @@ This uses Blizzard's own **Windows ARM64** WoW client, so the game itself runs n
 > Unofficial community project. Not affiliated with or endorsed by Blizzard Entertainment. You need your own Battle.net account with WoW Forever access. This repo and its releases contain **no** Blizzard game files.
 
 ---
+
+## What this fork changes
+
+Upstream renders through Turnip, a Vulkan driver that only exists for Adreno GPUs. On any other GPU this fork:
+
+- **Uses the phone's own Vulkan driver** through GameNative's Vulkan wrapper, with Vulkan 1.3 exposed for DXVK 2.4.1
+  and BCn (DXT) textures transcoded on the CPU, since Mali can't sample them.
+- **Turns off the wrapper's OpConstantComposite shader pass**, which crashed the game's first shader on a Mali-G615.
+- **Adds a 540p resolution** and makes it the default there.
+- **Adds setup-screen options** for the texture transcoder, wrapper build, shader pass and diagnostics, so a new
+  device can be tried without rebuilding. Known working on the Titan 2: Textures "CPU, all formats", Driver layer
+  "GameNative", Shader patching "Off". The GPU texture modes corrupt textures on that device.
+- **Diagnostics** (off by default) writes DXVK and Wine logs to a `DxvkLogs` folder in the game folder.
+
+For phones with a hardware keyboard:
+
+- **Alt-layer keys work in game.** A keyboard with no number row types digits and symbols as Alt+letter; those reach
+  the game as the real number or symbol key.
+- **`keymap.txt`** in the game folder remaps any hardware key, including `ALT+` and `SHIFT+` layers. Sym is Tab and
+  Fn is Esc by default. Keys nothing is mapped to are named in `keymap-unmapped.txt`.
+- **Interface option:** WoW's keyboard-and-mouse interface instead of the gamepad one, the default on a phone with a
+  QWERTY keyboard.
+- **On-screen Touch and Menu buttons:** Touch switches between the gamepad overlay and direct touch (tap to left
+  click, two-finger tap to right click); Menu presses Esc.
+
+Test APKs are built by the "Build test APK" workflow on every push and attached to the run as an artifact. They are
+signed with the key in `tools/test-signing`, which is public on purpose so that test builds install over each other.
+Because anyone can sign with it, only install test builds from a source you trust.
 
 ## Supported devices
 
